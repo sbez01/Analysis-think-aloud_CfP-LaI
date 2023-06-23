@@ -24,9 +24,15 @@ library(hrbrthemes)
 library(ggalt)
 library(gt)
 library(heuristicsmineR)
+library(heuristicsmineR)
+library(eventdataR)
+library(bupaR)
+library(petrinetR)
+library(psmineR)
+
 ```
 
-# Data import: excel sheets from MAXQDA and validation due to MAXQDA issues
+# 0. Data import: excel sheets from MAXQDA and validation due to MAXQDA issues
 
 neu händisch erstellt von Fabian
 
@@ -68,7 +74,9 @@ anti_join(data_maxqda_komplett_florian_validating, data_maxqda_komplett_fabian_v
 
 beide sind quasi gleich. Was bei Fabian zusätzilch noch drin ist, waren alte Kodierungen ganz am Anfang von Kategorien, die dann nicht weiterverfolgt wurden. turnID muss beachtet werden (das macht auch Sinn)
 
-event df, bei dem Rundungsproblem noch nicht berücksichtig ist
+# 1. Start wrangling
+
+## event df, bei dem Rundungsproblem noch nicht berücksichtig ist
 
 ```{r}
 data_konsens_event <- read_excel("data/MAXQDA 2018 Codings 3_fertig_Runde1.xlsx")%>%
@@ -81,7 +89,7 @@ data_konsens_event <- read_excel("data/MAXQDA 2018 Codings 3_fertig_Runde1.xlsx"
   select(-Anfang, -Ende, -Code)
 ```
 
-# Wrangling Rundungsproblem timestamps mit lubridate
+## Wrangling Rundungsproblem timestamps mit lubridate
 
 ```{r}
 data_konsens_event_corrected <- 
@@ -102,7 +110,7 @@ read_excel("data/Codierte Segmente komplett_Export Fabian.xlsx")%>%
   
 ```
 
-# events to turns
+## events to turns
 
 ```{r}
 data_timesampling <- data_konsens_event_corrected%>%
@@ -119,7 +127,34 @@ data_timesampling <- data_konsens_event_corrected%>%
 
 ```
 
-# Check überlappende Kodierungen
+## Datengrundlage nur offener think-aloud timesampling
+
+```{r}
+data_timesampling_ta_o <- data_timesampling%>%
+  select(Dokumentname, code_RG, code_FA, code_AB, code_HM, code_SU, code_TA_O, time)%>%
+  filter(code_TA_O == 1)
+```
+
+## filtering event df nur offener Think-aloud Teil (TA_O): alles, was vor dem ende des (letzten vergebenen) TA_O event liegt
+
+```{r}
+# wenn Lehrpersonen vor dem Stimulus angefangen haben, laut zu denken, gibt es mehrere TA_O-Kodierungen. Daher filterung nach dem max von TA_O innerhalb von Personen
+# 
+max_TA_O <- data_konsens_event_corrected%>% 
+  select(-Dokumentgruppe)%>%
+  filter(code %in% c("TA_O"))%>%
+  group_by(Dokumentname)%>%
+  summarize(max_TA_O = max(ymd_hms(end)))
+
+konsens_event_ta_o <- data_konsens_event_corrected%>% 
+  select(-Dokumentgruppe)%>%
+  filter(code %in% c("RG", "AB", "FA", "HM"))%>%
+  left_join(., max_TA_O, by = "Dokumentname")%>%
+  filter(end <= max_TA_O)
+
+```
+
+# 2. Check überlappende Kodierungen
 
 ## Grafikcodes
 
@@ -285,25 +320,12 @@ group_by(Dokumentname)%>%
 
 nicht ganz so informativ wie gedacht ...
 
-# Datengrundlage nur offener think-aloud timesampling
+
+# 3. Exploring HeuristicsMiner bzw. bupaverse
+
+Beispieldatensätze
 
 ```{r}
-data_timesampling_ta_o <- data_timesampling%>%
-  select(Dokumentname, code_RG, code_FA, code_AB, code_HM, code_SU, code_TA_O, time)%>%
-  filter(code_TA_O == 1)
-```
-
-# Exploring HeuristicsMiner bzw. bupaverse
-
-Libraries und Beispieldatensätze
-
-```{r}
-library(heuristicsmineR)
-library(eventdataR)
-library(bupaR)
-library(petrinetR)
-library(psmineR)
-
 
 # testcode
 data(patients)
@@ -319,28 +341,10 @@ View(patients)
 
 auch in den patients daten gibt es "Lücken", d.h. die events gehen nicht direkt ineinander über.
 
-## data wrangling: event logs
+## 3.1 event logs 1. Versuch, alle events am selben Tag
 
-filtering nur offener Think-aloud Teil (TA_O): alles, was vor dem ende des (letzten vergebenen) TA_O event liegt
 
-```{r}
-# wenn Lehrpersonen vor dem Stimulus angefangen haben, laut zu denken, gibt es mehrere TA_O-Kodierungen. Daher filterung nach dem max von TA_O innerhalb von Personen
-# 
-max_TA_O <- data_konsens_event_corrected%>% 
-  select(-Dokumentgruppe)%>%
-  filter(code %in% c("TA_O"))%>%
-  group_by(Dokumentname)%>%
-  summarize(max_TA_O = max(ymd_hms(end)))
-
-konsens_event_ta_o <- data_konsens_event_corrected%>% 
-  select(-Dokumentgruppe)%>%
-  filter(code %in% c("RG", "AB", "FA", "HM"))%>%
-  left_join(., max_TA_O, by = "Dokumentname")%>%
-  filter(end <= max_TA_O)
-
-```
-
-creating event logs
+### wrangling
 
 ```{r}
 
@@ -383,15 +387,12 @@ render_PN(pn)
 
 ```
 
-Visual inspections
+### Visual inspections
 
 ```{r}
 
 eventlog_test %>% activity_presence() %>%
     plot
-
-eventlog_test2 %>% 
-  process_map(performance())
 
 
 eventlog_test %>% 
@@ -406,6 +407,105 @@ eventlog_test %>%
 
 
 eventlog_test %>%
+    ps_detailed()
+
+```
+
+## 3.2 event logs 2. Versuch: creating event logs with individual days per teacher 
+
+### wrangling
+```{r}
+individual_dates <- konsens_event_ta_o%>%
+  select(Dokumentname)%>%
+  unique()%>%
+  mutate(day = seq(ymd('2000-01-01'), ymd('2000-02-17'), by='1 day')) # 48 Tage in Folge für 48 Lehrkräfte ab dem 01.01.2000
+  
+  
+data_konsens_event_corrected_ind_dates <- read_excel("data/MAXQDA 2018 Codings 3_fertig_Runde1.xlsx")%>%
+  select(Dokumentgruppe, Dokumentname, Anfang, Ende, Code)%>%
+    filter(Dokumentgruppe == "Konsens")%>%
+  left_join(., individual_dates, by = "Dokumentname")%>%
+    mutate(Anfang_2 = str_sub(Anfang, -1),
+         Ende_2 = str_sub(Ende, -1))%>%
+  mutate(start_1 = ymd_hms(ymd(day) + hms(Anfang)), 
+         end_1 = ymd_hms(ymd(day) + hms(Ende)), 
+         turnID = 1:n(),
+        code = Code)%>%
+  mutate(start = case_when(Anfang_2 > 4 ~ (ymd_hms(start_1) + seconds(1)), 
+                           TRUE~ ymd_hms(start_1)))%>%
+  mutate(end = case_when(Ende_2 > 4 ~ (ymd_hms(end_1) + seconds(1)), 
+                         TRUE ~ ymd_hms(end_1)))%>%
+  select(Dokumentname, Dokumentgruppe, code, turnID, start, end)
+  
+
+  
+  max_TA_O_ind_dates <- data_konsens_event_corrected_ind_dates%>% 
+  select(-Dokumentgruppe)%>%
+  filter(code %in% c("TA_O"))%>%
+  group_by(Dokumentname)%>%
+  summarize(max_TA_O = max(ymd_hms(end)))
+
+konsens_event_ta_o_ind_dates <- data_konsens_event_corrected_ind_dates%>% 
+  select(-Dokumentgruppe)%>%
+  filter(code %in% c("RG", "AB", "FA", "HM"))%>%
+  left_join(., max_TA_O_ind_dates, by = "Dokumentname")%>%
+  filter(end <= max_TA_O)%>%
+  select(-max_TA_O)
+
+eventlog_test_ind_dates <- konsens_event_ta_o_ind_dates%>% 
+  rename(complete = end)%>%
+  convert_timestamps(columns = c("start", "complete"), format = ymd_hms)%>%
+  mutate(test = as.character("a"))%>% # man braucht das auf jeden Fall, ohne resource id kann man das objekt nicht generieren, daher dummy var 
+   activitylog(case_id = "Dokumentname",
+                activity_id = "code",
+                timestamps = c("start", "complete"), 
+               resource_id = "test")%>% #d
+  to_eventlog() # von eventlog zu activitylog geht recht schnell, es gibt auch die inverse Funktion 
+
+
+```
+
+### Visual inspections
+```{r}
+# Dependency graph / matrix
+dependency_matrix(eventlog_test_ind_dates)
+
+# Causal graph / Heuristics net
+causal_net(eventlog_test_ind_dates)
+ 
+causal_net(eventlog_test_ind_dates, threshold = .7)
+
+causal_net(eventlog_test_ind_dates, threshold = .5)
+
+
+# petri net 
+# Convert to Petri net
+cn <- causal_net(eventlog_test_ind_dates, threshold = .7)
+pn <- as.petrinet(cn)
+render_PN(pn)
+
+```
+
+
+```{r}
+
+eventlog_test_ind_dates %>% 
+  activity_presence() %>%
+    plot
+
+
+eventlog_test_ind_dates %>% 
+   trace_explorer(n_traces = 10,
+                  type = c("frequent"),
+                   scale_fill = ggplot2::scale_fill_discrete)
+
+eventlog_test_ind_dates %>% 
+   trace_explorer(n_traces = 10,
+                  type = c("infrequent"),
+                   scale_fill = ggplot2::scale_fill_discrete) # für mich kein unterschied sichtbar zwischen frequent und infrequent 
+
+
+eventlog_test_ind_dates %>%
     ps_detailed()
 
 ```
