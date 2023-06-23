@@ -3,6 +3,8 @@ author: "Sarah Bez"
 title: "Data analysis think-aloud"
 format: html
 editor: visual
+editor_options: 
+  chunk_output_type: console
 ---
 
 Libraries
@@ -320,7 +322,6 @@ group_by(Dokumentname)%>%
 
 nicht ganz so informativ wie gedacht ...
 
-
 # 3. Exploring HeuristicsMiner bzw. bupaverse
 
 Beispieldatensätze
@@ -342,7 +343,6 @@ View(patients)
 auch in den patients daten gibt es "Lücken", d.h. die events gehen nicht direkt ineinander über.
 
 ## 3.1 event logs 1. Versuch, alle events am selben Tag
-
 
 ### wrangling
 
@@ -411,9 +411,10 @@ eventlog_test %>%
 
 ```
 
-## 3.2 event logs 2. Versuch: creating event logs with individual days per teacher 
+## 3.2 event logs 2. Versuch: creating event logs with individual days per teacher
 
 ### wrangling
+
 ```{r}
 individual_dates <- konsens_event_ta_o%>%
   select(Dokumentname)%>%
@@ -466,9 +467,13 @@ eventlog_test_ind_dates <- konsens_event_ta_o_ind_dates%>%
 ```
 
 ### Visual inspections
+
 ```{r}
 # Dependency graph / matrix
-dependency_matrix(eventlog_test_ind_dates)
+dependency_matrix(
+  eventlog_test_ind_dates |> 
+    group_by(),
+  threshold = 0)
 
 # Causal graph / Heuristics net
 causal_net(eventlog_test_ind_dates)
@@ -485,7 +490,6 @@ pn <- as.petrinet(cn)
 render_PN(pn)
 
 ```
-
 
 ```{r}
 
